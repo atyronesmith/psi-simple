@@ -1,0 +1,50 @@
+---
+# OpenShift Installation Configuration
+openshift_version: "4.18"
+openshift_pull_secret_path: "{{ playbook_dir }}/pull-secret.json"
+openshift_installer_path: "{{ playbook_dir }}/openshift-install"
+openshift_client_path: "{{ playbook_dir }}/oc"
+
+# Cluster configuration
+openshift_cluster_name: "{{ openshift_cluster_name | default('openshift-cluster') }}"
+openshift_base_domain: "{{ openshift_base_domain | default('example.com') }}"
+openshift_cluster_network_cidr: "{{ openshift_cluster_network_cidr | default('10.128.0.0/14') }}"
+openshift_service_network_cidr: "{{ openshift_service_network_cidr | default('172.30.0.0/16') }}"
+openshift_host_network_cidr: "{{ openshift_host_network_cidr | default('10.0.0.0/16') }}"
+
+# Compact cluster settings
+openshift_compute_replicas: "{{ openshift_compute_replicas | default(0) }}"
+openshift_control_plane_replicas: 3
+
+# Platform configuration (bare metal, vsphere, aws, etc.)
+openshift_platform: baremetal
+
+# Bare metal specific settings
+openshift_baremetal_provisioning_network: "192.168.1.0/24"
+openshift_baremetal_provisioning_interface: "eth1"
+openshift_baremetal_external_interface: "eth0"
+
+# DNS configuration
+openshift_dns_servers:
+  - "8.8.8.8"
+  - "8.8.4.4"
+
+# NTP servers
+openshift_ntp_servers:
+  - "pool.ntp.org"
+
+# SSH key for cluster access
+openshift_ssh_key_path: "{{ playbook_dir }}/ssh_key"
+
+# Registry configuration
+openshift_registry_mirrors: []
+openshift_additional_trust_bundle: ""
+
+# Proxy configuration (if needed)
+openshift_http_proxy: ""
+openshift_https_proxy: ""
+openshift_no_proxy: "localhost,127.0.0.1,{{ openshift_cluster_name }}.{{ openshift_base_domain }}"
+
+# Machine config pool settings
+openshift_machine_config_pool_worker: false  # Disable worker MCP for compact cluster
+

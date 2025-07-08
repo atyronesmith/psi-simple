@@ -1,0 +1,69 @@
+---
+- name: Check if installation directory exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install"
+  register: install_dir_stat
+
+- name: Fail if installation directory doesn't exist
+  ansible.builtin.fail:
+    msg: "Installation directory {{ playbook_dir }}/openshift-install does not exist. Cannot destroy cluster."
+  when: not install_dir_stat.stat.exists
+
+- name: Check if kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install/auth/kubeconfig"
+  register: kubeconfig_stat
+
+- name: Export KUBECONFIG if it exists
+  ansible.builtin.set_fact:
+    kubeconfig_path: "{{ playbook_dir }}/openshift-install/auth/kubeconfig"
+  when: kubeconfig_stat.stat.exists
+
+- name: Get INFRA_ID from metadata
+  ansible.builtin.shell: jq -r .infraID {{ playbook_dir }}/openshift-install/metadata.json
+  register: infra_id_output
+  changed_when: false
+  failed_when: false
+
+- name: Set INFRA_ID fact
+  ansible.builtin.set_fact:
+    infra_id: "{{ infra_id_output.stdout }}"
+  when: infra_id_output.rc == 0
+
+- name: Check cluster status before destruction
+  ansible.builtin.command: >
+    {{ playbook_dir }}/openshift-install/openshift-install destroy cluster
+    --dir={{ playbook_dir }}/openshift-install
+    --log-level=info
+  args:
+    creates: "{{ playbook_dir }}/openshift-install/.openshift_install.log"
+  register: destroy_result
+  failed_when: false
+
+- name: Remove installation directory
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/openshift-install"
+    state: absent
+
+- name: Remove downloaded files
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/{{ item }}"
+    state: absent
+  loop:
+    - openshift-install.tar.gz
+    - openshift-client.tar.gz
+
+- name: Print destruction information
+  ansible.builtin.debug:
+    msg: |
+      OpenShift cluster has been destroyed.
+
+      Removed:
+      - Installation directory: {{ playbook_dir }}/openshift-install/
+      - Downloaded installer and client files
+
+      INFRA_ID was: {{ infra_id | default('unknown') }}
+
+      Note: You may need to manually clean up any infrastructure resources
+      that were created outside of the OpenShift installer (e.g., load balancers,
+      DNS records, etc.) depending on your platform.

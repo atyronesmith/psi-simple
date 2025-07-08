@@ -1,0 +1,25 @@
+apiVersion: v1
+baseDomain: {{ openshift_base_domain }}
+metadata:
+  name: {{ openshift_cluster_name }}
+compute:
+- name: worker
+  replicas: {{ openshift_compute_replicas }}
+controlPlane:
+  name: master
+  replicas: {{ openshift_control_plane_replicas }}
+platform:
+  {{ openshift_platform }}:
+    # Platform-specific configuration goes here
+    # For baremetal, add hosts, interfaces, etc.
+pullSecret: '{{ lookup('file', openshift_pull_secret_path) }}'
+sshKey: '{{ lookup('file', openshift_ssh_key_path) }}'
+networking:
+  networkType: OVNKubernetes
+  clusterNetwork:
+  - cidr: {{ openshift_cluster_network_cidr }}
+    hostPrefix: 23
+  serviceNetwork:
+  - {{ openshift_service_network_cidr }}
+  machineNetwork:
+  - cidr: {{ openshift_host_network_cidr }}

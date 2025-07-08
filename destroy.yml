@@ -1,0 +1,8 @@
+---
+- name: Destroy OpenShift Cluster
+  hosts: localhost
+  connection: local
+  vars_files:
+    - group_vars/all.yml
+  roles:
+    - openshift-destroy

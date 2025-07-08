@@ -1,0 +1,109 @@
+---
+- name: Create installation directory
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/openshift-install"
+    state: directory
+    mode: '0755'
+
+- name: Download OpenShift installer
+  ansible.builtin.get_url:
+    url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ openshift_version }}/openshift-install-linux-{{ openshift_version }}.tar.gz"
+    dest: "{{ playbook_dir }}/openshift-install.tar.gz"
+    mode: '0644'
+  register: installer_download
+
+- name: Extract OpenShift installer
+  ansible.builtin.unarchive:
+    src: "{{ playbook_dir }}/openshift-install.tar.gz"
+    dest: "{{ playbook_dir }}/openshift-install/"
+    remote_src: false
+    creates: "{{ playbook_dir }}/openshift-install/openshift-install"
+  when: installer_download.changed
+
+- name: Download OpenShift client (oc)
+  ansible.builtin.get_url:
+    url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ openshift_version }}/openshift-client-linux-{{ openshift_version }}.tar.gz"
+    dest: "{{ playbook_dir }}/openshift-client.tar.gz"
+    mode: '0644'
+  register: client_download
+
+- name: Extract OpenShift client
+  ansible.builtin.unarchive:
+    src: "{{ playbook_dir }}/openshift-client.tar.gz"
+    dest: "{{ playbook_dir }}/openshift-install/"
+    remote_src: false
+    creates: "{{ playbook_dir }}/openshift-install/oc"
+  when: client_download.changed
+
+- name: Make installer and client executable
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/openshift-install/{{ item }}"
+    mode: '0755'
+  loop:
+    - openshift-install
+    - oc
+
+- name: Create install-config.yaml for compact cluster
+  ansible.builtin.template:
+    src: install-config.yaml.j2
+    dest: "{{ playbook_dir }}/openshift-install/install-config.yaml"
+    mode: '0644'
+
+- name: Run OpenShift installer to create manifests
+  ansible.builtin.command: >
+    {{ playbook_dir }}/openshift-install/openshift-install create manifests
+    --dir={{ playbook_dir }}/openshift-install
+  args:
+    creates: "{{ playbook_dir }}/openshift-install/manifests"
+
+- name: Remove worker machine set for compact cluster
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/openshift-install/manifests/99_openshift-cluster-api_worker-machineset-*.yaml"
+    state: absent
+  failed_when: false
+
+- name: Check and set mastersSchedulable to false
+  ansible.builtin.replace:
+    path: "{{ playbook_dir }}/openshift-install/manifests/cluster-scheduler-02-config.yml"
+    regexp: 'mastersSchedulable: true'
+    replace: 'mastersSchedulable: false'
+  register: scheduler_config_change
+
+- name: Run OpenShift installer to create ignition configs
+  ansible.builtin.command: >
+    {{ playbook_dir }}/openshift-install/openshift-install create ignition-configs
+    --dir={{ playbook_dir }}/openshift-install
+  args:
+    creates: "{{ playbook_dir }}/openshift-install/bootstrap.ign"
+
+- name: Export INFRA_ID from metadata
+  ansible.builtin.shell: jq -r .infraID {{ playbook_dir }}/openshift-install/metadata.json
+  register: infra_id_output
+  changed_when: false
+
+- name: Set INFRA_ID fact
+  ansible.builtin.set_fact:
+    infra_id: "{{ infra_id_output.stdout }}"
+
+- name: Print installation information
+  ansible.builtin.debug:
+    msg: |
+      OpenShift installation files have been created in {{ playbook_dir }}/openshift-install/
+
+      Files created:
+      - install-config.yaml: Cluster configuration
+      - manifests/: Kubernetes manifests (worker machine sets removed, mastersSchedulable set to false)
+      - bootstrap.ign: Bootstrap node ignition config
+      - master.ign: Master nodes ignition config
+      - worker.ign: Worker nodes ignition config (not used in compact cluster)
+      - metadata.json: Cluster metadata
+
+      INFRA_ID: {{ infra_id }}
+
+      Next steps:
+      1. Copy the ignition configs to your infrastructure
+      2. Provision nodes using the ignition configs
+      3. Start the bootstrap process
+      4. Complete the cluster installation
+
+      For detailed instructions, see the OpenShift documentation.

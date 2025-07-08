@@ -1,0 +1,68 @@
+---
+- name: Check if installation directory exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install"
+  register: install_dir_stat
+
+- name: Check if kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install/auth/kubeconfig"
+  register: kubeconfig_stat
+
+- name: Display installation status
+  ansible.builtin.debug:
+    msg: |
+      OpenShift Installation Status:
+
+      Installation directory exists: {{ install_dir_stat.stat.exists }}
+      Kubeconfig exists: {{ kubeconfig_stat.stat.exists }}
+
+      {% if install_dir_stat.stat.exists %}
+      Installation directory: {{ playbook_dir }}/openshift-install/
+      {% endif %}
+
+      {% if kubeconfig_stat.stat.exists %}
+      Kubeconfig: {{ playbook_dir }}/openshift-install/auth/kubeconfig
+      {% endif %}
+
+- name: Get cluster metadata if available
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install/metadata.json"
+  register: metadata_stat
+
+- name: Display cluster metadata
+  ansible.builtin.debug:
+    msg: |
+      Cluster Metadata:
+      {% if metadata_stat.stat.exists %}
+      {% set metadata = lookup('file', playbook_dir + '/openshift-install/metadata.json') | from_json %}
+      - Cluster Name: {{ metadata.clusterName | default('unknown') }}
+      - Infrastructure ID: {{ metadata.infraID | default('unknown') }}
+      - OpenShift Version: {{ metadata.openshiftVersion | default('unknown') }}
+      {% else %}
+      - No metadata available
+      {% endif %}
+
+- name: Check cluster status if kubeconfig exists
+  ansible.builtin.command: >
+    {{ playbook_dir }}/openshift-install/openshift-install wait-for install-complete
+    --dir={{ playbook_dir }}/openshift-install
+    --log-level=info
+  register: cluster_status
+  failed_when: false
+  when: kubeconfig_stat.stat.exists
+
+- name: Display cluster status
+  ansible.builtin.debug:
+    msg: |
+      Cluster Status:
+      {% if kubeconfig_stat.stat.exists %}
+      {% if cluster_status.rc == 0 %}
+      - Status: Installation Complete
+      {% else %}
+      - Status: Installation In Progress or Failed
+      - Last check output: {{ cluster_status.stdout_lines | default([]) }}
+      {% endif %}
+      {% else %}
+      - Status: No kubeconfig found - cluster may not be installed yet
+      {% endif %}

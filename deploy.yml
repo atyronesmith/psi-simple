@@ -1,0 +1,8 @@
+---
+- name: Deploy OpenShift Compact Cluster
+  hosts: localhost
+  connection: local
+  vars_files:
+    - group_vars/all.yml
+  roles:
+    - openshift-install

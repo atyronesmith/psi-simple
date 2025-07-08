@@ -1,0 +1,8 @@
+---
+- name: Check OpenShift Cluster Status
+  hosts: localhost
+  connection: local
+  vars_files:
+    - group_vars/all.yml
+  roles:
+    - openshift-status
