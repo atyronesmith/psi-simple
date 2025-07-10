@@ -1,0 +1,154 @@
+# Cursor Rules for OpenShift Compact Cluster Project
+
+## Project Implementation Status
+
+### Installation Approach
+- **Method**: Installer-Provisioned Infrastructure (IPI) using official `openshift-install` tool
+- **Target Platform**: Red Hat OpenStack Platform (RHOSP)
+- **Cluster Type**: Compact cluster (0 worker nodes, 3 control plane nodes)
+- **Architecture**: Follows Red Hat OpenShift documentation best practices
+- **Validation Status**: All ansible-lint checks pass (production profile)
+
+### Enhanced Features Implementation
+- **Prerequisite Validation**: `roles/openshift-install/tasks/prerequisites.yml` validates environment, tools, files, and OpenStack connectivity
+- **Status Checking**: `roles/openshift_destroy/tasks/status_check.yml` checks cluster status and requires confirmation before destruction
+- **Error Handling**: Enhanced with retries, timeouts, and detailed debugging information
+- **Cleanup Handlers**: `roles/openshift-install/handlers/main.yml` provides automatic cleanup on failure
+- **User Experience**: Clear status messages, troubleshooting guidance, and interactive prompts
+
+### Key Files and Structure
+```
+roles/
+├── openshift-install/
+│   ├── tasks/
+│   │   ├── main.yml              # Main installation tasks
+│   │   └── prerequisites.yml     # Environment validation
+│   ├── templates/
+│   │   └── install-config.yaml.j2
+│   └── handlers/
+│       └── main.yml              # Cleanup handlers
+├── openshift_destroy/
+│   └── tasks/
+│       ├── main.yml              # Main destruction tasks
+│       └── status_check.yml      # Pre-destruction validation
+└── openshift_status/
+    └── tasks/
+        └── main.yml              # Status checking tasks
+```
+
+### Current Configuration
+- **Binary Management**: Downloads OpenShift installer and client only if missing
+- **Floating IPs**: Automatically creates API and Ingress floating IPs with validation
+- **DNS**: Adds local /etc/hosts entries for cluster access
+- **Manifests**: Removes worker machine sets and sets mastersSchedulable=false
+- **Ignition**: Generates bootstrap, master, and worker ignition configs
+
+## Code Quality Standards
+
+### Ansible Code Requirements
+- All Ansible playbooks, roles, and tasks must pass `ansible-lint` validation
+- Use fully qualified collection names (FQCN) for all Ansible modules
+- Follow Ansible best practices and style guidelines
+- Ensure proper indentation and YAML formatting
+- Use descriptive task names and include proper error handling
+
+### Shell Script Requirements
+- All shell scripts must pass `shellcheck` validation without errors
+- Use `set -euo pipefail` for strict error handling
+- Always use `read -r` to prevent backslash mangling
+- Quote all variables: `"$variable"` not `$variable`
+- Avoid `A && B || C` pattern - use proper if-then-else
+- Separate variable declaration from assignment when using command substitution
+- Ensure bash 3.2 compatibility for macOS (avoid `mapfile`, use `IFS=$'\n' read -d '' -r -a`)
+
+### Ansible Lint Rules
+- All `.yml` and `.yaml` files containing Ansible code must pass `ansible-lint` without errors
+- Address all linting warnings and suggestions
+- Use proper file permissions in file operations
+- Avoid deprecated module usage
+- Use handlers for tasks that run when changed
+- Ensure proper task organization and structure
+
+### Code Style
+- Use consistent indentation (2 spaces for YAML)
+- Include proper comments for complex logic
+- Use descriptive variable names
+- Follow the established project structure with roles
+
+### Testing Requirements
+- All Ansible code should be tested with `ansible-lint` before committing
+- Use `make validate` to check prerequisites and configuration
+- Ensure playbooks can run without syntax errors
+
+### Documentation
+- Keep README.md updated with any changes
+- Document any new variables or configuration options
+- Include usage examples for new features
+
+## Project Structure
+- Maintain the modular role-based structure
+- Keep playbooks focused on specific operations (deploy, destroy, status)
+- Use the Makefile for common operations
+- Follow the established directory structure
+
+## Security
+- Never commit sensitive information like passwords or API keys
+- Use the `secrets/` directory for pull secrets and SSH keys
+- The `secrets/` directory exists in the repository with documentation
+- Secret files within `secrets/` are excluded from Git via `.gitignore`
+- Validate all user inputs and configurations
+- Required files: `secrets/pull-secret.json` and `secrets/ssh_key.pub`
+
+## Environment Setup
+- Always activate the virtual environment before running terminal commands
+- Use `source ~/dev/venv/oc/bin/activate` to activate the OpenShift virtual environment
+- Set the OpenStack cloud environment: `export OS_CLOUD=psi`
+- **CRITICAL**: Always export OS_CLOUD=psi before running any OpenStack commands in terminal
+- Ensure all Python dependencies are installed in the virtual environment
+- Verify the virtual environment is active before executing any commands
+
+## Validation and Error Handling Standards
+
+### Prerequisite Validation Requirements
+- Virtual environment activation check
+- OS_CLOUD environment variable validation
+- Required tools verification (jq, openstack, python3)
+- Pull secret file existence and JSON validation
+- SSH key file existence and format validation
+- OpenStack connectivity test with retries
+- External network existence verification
+- Floating IP availability check
+
+### Error Handling Best Practices
+- Use retries with delays for network operations
+- Validate extracted values from OpenStack commands
+- Provide detailed error messages with troubleshooting guidance
+- Include cleanup handlers for failure scenarios
+- Log comprehensive debugging information
+
+### Status Checking Standards
+- Verify cluster accessibility before destruction
+- Display detailed cluster information
+- Require interactive confirmation for destructive operations
+- Handle inaccessible clusters gracefully
+- Provide clear warnings about consequences
+
+## Troubleshooting and Recovery
+
+### Common Issues and Solutions
+- **Binary Download Issues**: Check if binaries already exist in `bin/` directory
+- **Floating IP Failures**: Verify OpenStack quotas and network configuration
+- **Installation Failures**: Check `.openshift_install.log` for detailed errors
+- **Environment Issues**: Ensure virtual environment is active and OS_CLOUD is set
+
+### Recovery Procedures
+- Use `make clean` to remove installation artifacts without destroying cluster
+- Check OpenStack resources manually: `openstack server list`
+- Verify network connectivity to floating IPs
+- Review ansible-lint output for code quality issues
+
+### File Locations for Debugging
+- Installation logs: `openshift-install/.openshift_install.log`
+- Kubeconfig: `openshift-install/auth/kubeconfig`
+- Kubeadmin password: `openshift-install/auth/kubeadmin-password`
+- Cluster metadata: `openshift-install/metadata.json`

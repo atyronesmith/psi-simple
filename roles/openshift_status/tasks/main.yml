@@ -1,0 +1,224 @@
+---
+# ============================================================================
+# OpenShift Cluster Status Checking
+# ============================================================================
+# This file contains tasks for checking and reporting the current status of
+# an OpenShift cluster installation and deployment.
+#
+# Status Check Categories:
+# 1. Installation File Validation (directories, configs, credentials)
+# 2. Cluster Metadata Analysis (identification, infrastructure info)
+# 3. Cluster Accessibility Testing (API connectivity, authentication)
+# 4. Installation Progress Assessment (completion status)
+# 5. Comprehensive Status Reporting (detailed cluster information)
+#
+# Use Cases:
+# - Monitor installation progress during deployment
+# - Verify cluster accessibility and health
+# - Troubleshoot installation or connectivity issues
+# - Validate cluster state before operations
+# - Provide detailed cluster information for administrators
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Phase 1: Installation File System Validation
+# ----------------------------------------------------------------------------
+# Verify that installation files and directories exist and are accessible
+
+- name: Check if installation directory exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install"
+  register: install_dir_stat
+  # Validates presence of the installation workspace directory
+  # This directory is created during installation and contains all cluster state
+
+- name: Check if kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install/auth/kubeconfig"
+  register: kubeconfig_stat
+  # Checks for cluster authentication credentials
+  # Kubeconfig is generated when cluster API becomes accessible
+
+# ----------------------------------------------------------------------------
+# Phase 2: Installation Status Overview
+# ----------------------------------------------------------------------------
+# Provide initial status overview based on file system state
+
+- name: Display installation status
+  ansible.builtin.debug:
+    msg: |
+      OpenShift Installation Status:
+
+      Installation directory exists: {{ install_dir_stat.stat.exists }}
+      Kubeconfig exists: {{ kubeconfig_stat.stat.exists }}
+
+      {% if install_dir_stat.stat.exists %}
+      Installation directory: {{ playbook_dir }}/openshift-install/
+      {% endif %}
+
+      {% if kubeconfig_stat.stat.exists %}
+      Kubeconfig: {{ playbook_dir }}/openshift-install/auth/kubeconfig
+      {% endif %}
+  # Provides basic installation status overview
+  # Indicates whether installation has been started and if cluster is accessible
+
+# ----------------------------------------------------------------------------
+# Phase 3: Cluster Metadata Analysis
+# ----------------------------------------------------------------------------
+# Extract and display cluster identification and infrastructure information
+
+- name: Get cluster metadata if available
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install/metadata.json"
+  register: metadata_stat
+  # Checks for cluster metadata file
+  # This file contains cluster identification and infrastructure details
+
+- name: Display cluster metadata
+  ansible.builtin.debug:
+    msg: |
+      Cluster Metadata:
+      {% if metadata_stat.stat.exists %}
+      {% set metadata = lookup('file', playbook_dir + '/openshift-install/metadata.json') | from_json %}
+      - Cluster Name: {{ metadata.clusterName | default('unknown') }}
+      - Infrastructure ID: {{ metadata.infraID | default('unknown') }}
+      - OpenShift Version: {{ metadata.openshiftVersion | default('unknown') }}
+      {% else %}
+      - No metadata available
+      {% endif %}
+  # Displays cluster identification information
+  # Includes cluster name, infrastructure ID, and OpenShift version
+  # Helps identify the specific cluster being monitored
+
+# ----------------------------------------------------------------------------
+# Phase 4: Cluster Installation Progress Assessment
+# ----------------------------------------------------------------------------
+# Test cluster installation completion and accessibility
+
+- name: Check cluster status if kubeconfig exists
+  ansible.builtin.command: >
+    {{ playbook_dir }}/openshift-install/openshift-install wait-for install-complete
+    --dir={{ playbook_dir }}/openshift-install
+    --log-level=info
+  register: cluster_status
+  failed_when: false
+  when: kubeconfig_stat.stat.exists
+  changed_when: false
+  # Tests cluster installation completion status
+  # Uses OpenShift installer's wait-for command for authoritative status
+  # Provides detailed installation progress information
+
+# ----------------------------------------------------------------------------
+# Phase 5: Comprehensive Status Reporting
+# ----------------------------------------------------------------------------
+# Provide detailed cluster status information and recommendations
+
+- name: Display cluster status
+  ansible.builtin.debug:
+    msg: |
+      Cluster Status:
+      {% if kubeconfig_stat.stat.exists %}
+      {% if cluster_status.rc == 0 %}
+      - Status: Installation Complete
+      {% else %}
+      - Status: Installation In Progress or Failed
+      - Last check output: {{ cluster_status.stdout_lines | default([]) }}
+      {% endif %}
+      {% else %}
+      - Status: No kubeconfig found - cluster may not be installed yet
+      {% endif %}
+  # Provides comprehensive cluster status assessment
+  # Indicates installation completion, progress, or failure
+  # Includes detailed output for troubleshooting
+
+# ----------------------------------------------------------------------------
+# Phase 6: DNS and Network Connectivity Validation
+# ----------------------------------------------------------------------------
+# Test DNS resolution and cluster network accessibility (macOS only)
+
+- name: Check if running on macOS
+  ansible.builtin.set_fact:
+    is_macos: "{{ ansible_system == 'Darwin' }}"
+  # Detects macOS systems for DNS validation
+
+- name: Test DNS resolution for cluster API
+  ansible.builtin.command: nslookup api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+  register: dns_resolution_test
+  changed_when: false
+  failed_when: false
+  when: is_macos and kubeconfig_stat.stat.exists
+  # Tests DNS resolution for API endpoint on macOS systems
+
+- name: Test cluster API accessibility
+  ansible.builtin.uri:
+    url: "https://api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}:6443/healthz"
+    method: GET
+    validate_certs: false
+    timeout: 10
+  register: api_accessibility_test
+  failed_when: false
+  when: is_macos and kubeconfig_stat.stat.exists
+  # Tests if the cluster API is accessible and responding
+
+- name: Display DNS and network status
+  ansible.builtin.debug:
+    msg: |
+      DNS and Network Status:
+      {% if is_macos and kubeconfig_stat.stat.exists %}
+      - DNS Resolution: {% if dns_resolution_test.rc == 0 %}✅ SUCCESS{% else %}❌ FAILED{% endif %}
+      - API Access: {% if api_accessibility_test.status == 200 %}✅ SUCCESS{% else %}❌ FAILED ({{ api_accessibility_test.status | default('N/A') }}){% endif %}
+
+      {% if dns_resolution_test.rc == 0 and api_accessibility_test.status == 200 %}
+      ✅ DNS and network connectivity are working correctly!
+      {% elif dns_resolution_test.rc == 0 and api_accessibility_test.status != 200 %}
+      ⚠️  DNS resolution works but cluster API is not accessible.
+      This may indicate cluster is still initializing or network issues.
+      {% elif dns_resolution_test.rc != 0 %}
+      ⚠️  DNS resolution failed. You may need to configure DNS manually.
+      Run: make setup-dns-hosts
+      {% endif %}
+      {% else %}
+      - DNS testing skipped (not macOS or no kubeconfig)
+      {% endif %}
+  when: is_macos and kubeconfig_stat.stat.exists
+  # Displays DNS and network connectivity validation results
+
+# ============================================================================
+# Cluster Status Check Complete
+# ============================================================================
+# The cluster status check is complete. The following information has been
+# gathered and reported:
+#
+# File System Status:
+# - Installation directory existence and location
+# - Kubeconfig file availability
+# - Cluster metadata file presence
+#
+# Cluster Identification:
+# - Cluster name and domain information
+# - Infrastructure ID for resource tracking
+# - OpenShift version being deployed
+#
+# Installation Progress:
+# - Installation completion status
+# - Cluster accessibility assessment
+# - Progress information and potential issues
+#
+# Status Interpretation:
+# - Installation Complete: Cluster is fully deployed and accessible
+# - Installation In Progress: Cluster deployment is ongoing
+# - Installation Failed: Deployment encountered errors
+# - Not Started: No installation files found
+#
+# Next Steps Based on Status:
+# - Complete: Cluster is ready for use
+# - In Progress: Monitor logs and wait for completion
+# - Failed: Check installation logs for error details
+# - Not Started: Run deployment playbook to begin installation
+#
+# Use this information to:
+# - Monitor deployment progress
+# - Troubleshoot installation issues
+# - Verify cluster accessibility
+# - Plan operational activities
+# ============================================================================

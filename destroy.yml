@@ -1,8 +1,190 @@
 ---
+# ============================================================================
+# OpenShift Cluster Destruction Playbook
+# ============================================================================
+# This playbook safely destroys an OpenShift cluster and cleans up all
+# associated resources and files to return the environment to a clean state.
+#
+# Destruction Features:
+# - Comprehensive pre-destruction status checks
+# - Interactive user confirmation with detailed warnings
+# - Safe cluster and infrastructure removal
+# - Thorough cleanup of local files and directories
+# - Graceful handling of partial destruction scenarios
+# - Detailed status reporting and troubleshooting guidance
+#
+# Safety Features:
+# - Cluster status verification before destruction
+# - Clear warnings about data loss and irreversible actions
+# - Explicit user confirmation required
+# - Informative error messages for troubleshooting
+# - Graceful failure handling for incomplete clusters
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts destroy.yml
+#   or
+#   make destroy
+#
+# Prerequisites:
+# - Virtual environment activated: source ~/dev/venv/oc/bin/activate
+# - OpenStack cloud configured: export OS_CLOUD=psi
+# - Installation directory exists: openshift-install/
+# - User confirmation for destructive action
+# ============================================================================
+
 - name: Destroy OpenShift Cluster
-  hosts: localhost
-  connection: local
+  hosts: localhost                    # Runs on local machine (no remote hosts)
+  connection: local                   # Uses local connection for all tasks
   vars_files:
-    - group_vars/all.yml
+    - group_vars/all.yml             # Loads cluster configuration variables
   roles:
-    - openshift-destroy
+    - openshift_destroy              # Executes complete destruction process
+
+# ============================================================================
+# Destruction Process Overview
+# ============================================================================
+# This playbook executes the following destruction phases:
+#
+# 1. Pre-destruction Validation:
+#    - Installation directory and file verification
+#    - Cluster metadata extraction and analysis
+#    - Cluster API connectivity testing
+#    - Current cluster status assessment
+#
+# 2. Safety Confirmation:
+#    - Comprehensive cluster information display
+#    - Detailed warnings about destruction consequences
+#    - Interactive user confirmation requirement
+#    - Graceful cancellation option
+#
+# 3. Cluster Destruction:
+#    - OpenShift installer destroy command execution
+#    - OpenStack infrastructure resource removal
+#    - Retry logic for transient failures
+#    - Detailed progress and error reporting
+#
+# 4. Local Cleanup:
+#    - Installation directory removal
+#    - Configuration file cleanup
+#    - Downloaded binary cleanup
+#    - Comprehensive cleanup status reporting
+#
+# 5. Post-destruction Status:
+#    - Destruction completion confirmation
+#    - Manual cleanup guidance
+#    - Recovery recommendations
+#    - Next steps documentation
+#
+# Expected Duration: 5-15 minutes for complete destruction
+# ============================================================================
+
+# ============================================================================
+# What Gets Destroyed
+# ============================================================================
+# The destruction process removes:
+#
+# OpenStack Infrastructure:
+# - All cluster nodes (control plane and worker)
+# - OpenStack security groups
+# - OpenStack networks and subnets
+# - OpenStack ports and interfaces
+# - OpenStack storage volumes
+# - OpenStack load balancers
+# - Note: Floating IPs may be preserved depending on installer behavior
+#
+# Local Files:
+# - Installation directory (openshift-install/)
+# - Cluster configuration files (install-config.yaml)
+# - Kubernetes manifests and ignition configs
+# - Authentication files (kubeconfig, admin password)
+# - Installation logs and metadata
+# - Downloaded installer and client archives
+#
+# Data Loss Warning:
+# - ALL cluster data will be permanently lost
+# - ALL persistent volumes will be destroyed
+# - ALL applications and workloads will be removed
+# - ALL cluster-specific configurations will be deleted
+# - This action CANNOT be undone
+# ============================================================================
+
+# ============================================================================
+# Safety and Confirmation Process
+# ============================================================================
+# Multiple safety measures are in place:
+#
+# Pre-destruction Checks:
+# - Verify installation directory exists
+# - Check cluster accessibility and status
+# - Display current cluster information
+# - Show infrastructure ID and resource details
+#
+# User Confirmation:
+# - Clear warnings about consequences
+# - Explicit typing of "yes" required
+# - Detailed cluster information display
+# - Graceful cancellation option
+# - No confirmation = automatic cancellation
+#
+# Error Handling:
+# - Graceful handling of inaccessible clusters
+# - Retry logic for transient failures
+# - Detailed error messages and troubleshooting
+# - Partial destruction scenario handling
+# - Manual cleanup guidance when needed
+# ============================================================================
+
+# ============================================================================
+# Manual Cleanup Considerations
+# ============================================================================
+# After automated destruction, manual cleanup may be needed for:
+#
+# Floating IPs:
+# - Verify floating IPs are released or clean up manually
+# - Check for any orphaned floating IPs
+# - Consider IP reservation for future use
+#
+# DNS Records:
+# - Remove any custom DNS entries
+# - Clean up /etc/hosts entries (macOS)
+# - Update external DNS configurations
+#
+# OpenStack Resources:
+# - Verify all resources are properly removed
+# - Check for any orphaned ports or security groups
+# - Review quota usage and availability
+#
+# Load Balancers:
+# - Remove any external load balancers
+# - Clean up custom networking configurations
+# - Verify external service cleanup
+#
+# Additional Infrastructure:
+# - Remove any custom monitoring or logging infrastructure
+# - Clean up backup and storage configurations
+# - Review and clean up external integrations
+# ============================================================================
+
+# ============================================================================
+# Recovery and Next Steps
+# ============================================================================
+# After successful destruction:
+#
+# Environment State:
+# - Clean environment ready for new deployments
+# - OpenStack quotas available for reuse
+# - No residual cluster resources
+# - Fresh start capability
+#
+# Next Steps Options:
+# 1. Deploy new cluster: Run 'make deploy' for fresh installation
+# 2. Modify configuration: Update group_vars/all.yml for different settings
+# 3. Resource review: Check OpenStack resources for any manual cleanup
+# 4. Documentation: Update any external documentation or configurations
+#
+# Troubleshooting:
+# - Check destruction logs for any errors
+# - Verify OpenStack resource cleanup
+# - Review floating IP status and cleanup
+# - Confirm DNS configuration removal
+# ============================================================================

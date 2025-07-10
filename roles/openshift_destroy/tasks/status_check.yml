@@ -1,0 +1,222 @@
+---
+# ============================================================================
+# Pre-destruction Status Check and Safety Confirmation
+# ============================================================================
+# This file contains comprehensive status validation tasks that run before
+# cluster destruction to ensure safe and informed destruction operations.
+#
+# Status Check Process:
+# 1. Validate installation directory and cluster files
+# 2. Extract cluster metadata and identification
+# 3. Test cluster API connectivity and accessibility
+# 4. Gather cluster information (nodes, status, etc.)
+# 5. Display comprehensive cluster status information
+# 6. Provide detailed warnings about destruction consequences
+# 7. Require explicit user confirmation before proceeding
+#
+# Safety Features:
+# - Comprehensive cluster status reporting
+# - Clear warnings about data loss and irreversible actions
+# - Interactive confirmation with detailed information
+# - Graceful handling of inaccessible clusters
+# - Informative error messages for troubleshooting
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Phase 1: Installation State Validation
+# ----------------------------------------------------------------------------
+# Verify that cluster installation files and state information exist
+
+- name: Check if installation directory exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install"
+  register: install_dir_stat
+  # Validates presence of the installation workspace directory
+  # This directory contains all cluster state and configuration files
+
+- name: Check if kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install/auth/kubeconfig"
+  register: kubeconfig_stat
+  # Checks for cluster authentication credentials
+  # Kubeconfig is required for cluster status verification
+
+- name: Check if metadata.json exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install/metadata.json"
+  register: metadata_stat
+  # Validates presence of cluster metadata file
+  # Contains cluster identification and infrastructure information
+
+# ----------------------------------------------------------------------------
+# Phase 2: Cluster Metadata Extraction
+# ----------------------------------------------------------------------------
+# Extract cluster identification and infrastructure information
+
+- name: Get cluster metadata if available
+  ansible.builtin.command: jq -r '.clusterName + "." + .baseDomain' {{ playbook_dir }}/openshift-install/metadata.json
+  register: cluster_fqdn_output
+  changed_when: false
+  failed_when: false
+  when: metadata_stat.stat.exists
+  # Extracts cluster's fully qualified domain name
+  # Used for API connectivity testing and user identification
+
+- name: Get INFRA_ID from metadata
+  ansible.builtin.command: jq -r .infraID {{ playbook_dir }}/openshift-install/metadata.json
+  register: infra_id_output
+  changed_when: false
+  failed_when: false
+  when: metadata_stat.stat.exists
+  # Extracts infrastructure ID from cluster metadata
+  # INFRA_ID is used for naming OpenStack resources
+
+- name: Set cluster facts
+  ansible.builtin.set_fact:
+    cluster_fqdn: "{{ cluster_fqdn_output.stdout | default('unknown') }}"
+    infra_id: "{{ infra_id_output.stdout | default('unknown') }}"
+  when: metadata_stat.stat.exists
+  # Stores cluster identification information for status reporting
+  # Uses default values if extraction fails
+
+# ----------------------------------------------------------------------------
+# Phase 3: Cluster API Connectivity Testing
+# ----------------------------------------------------------------------------
+# Test cluster API accessibility and responsiveness
+
+- name: Check cluster API connectivity
+  ansible.builtin.uri:
+    url: "https://api.{{ cluster_fqdn }}:6443/version"
+    method: GET
+    validate_certs: false
+    timeout: 10
+  register: api_check
+  failed_when: false
+  when: cluster_fqdn is defined and cluster_fqdn != "unknown"
+  # Tests cluster API endpoint accessibility
+  # Uses version endpoint for lightweight connectivity test
+  # Disables certificate validation for self-signed certificates
+
+# ----------------------------------------------------------------------------
+# Phase 4: Cluster Status Information Gathering
+# ----------------------------------------------------------------------------
+# Collect detailed cluster status information if accessible
+
+- name: Get cluster nodes if accessible
+  ansible.builtin.command: >
+    {{ playbook_dir }}/bin/oc get nodes
+    --kubeconfig={{ playbook_dir }}/openshift-install/auth/kubeconfig
+  register: cluster_nodes
+  failed_when: false
+  changed_when: false
+  when: kubeconfig_stat.stat.exists
+  # Retrieves cluster node information using oc client
+  # Provides visibility into cluster state and health
+
+# ----------------------------------------------------------------------------
+# Phase 5: Comprehensive Status Display
+# ----------------------------------------------------------------------------
+# Display detailed cluster status information for user awareness
+
+- name: Display cluster status information
+  ansible.builtin.debug:
+    msg: |
+      🔍 Cluster Status Check:
+
+      Installation directory: {{ 'EXISTS' if install_dir_stat.stat.exists else 'MISSING' }}
+      Kubeconfig: {{ 'EXISTS' if kubeconfig_stat.stat.exists else 'MISSING' }}
+      Metadata: {{ 'EXISTS' if metadata_stat.stat.exists else 'MISSING' }}
+
+      {% if cluster_fqdn is defined and cluster_fqdn != "unknown" %}
+      Cluster FQDN: {{ cluster_fqdn }}
+      INFRA_ID: {{ infra_id }}
+
+      API Status: {{ 'ACCESSIBLE' if api_check.status == 200 else 'INACCESSIBLE' }}
+
+      {% if cluster_nodes.rc == 0 %}
+      Cluster Nodes:
+      {{ cluster_nodes.stdout }}
+      {% else %}
+      Cluster Nodes: CANNOT ACCESS
+      {% endif %}
+      {% endif %}
+  # Provides comprehensive cluster status overview
+  # Includes file existence, API accessibility, and node status
+  # Helps user understand current cluster state before destruction
+
+# ----------------------------------------------------------------------------
+# Phase 6: Destruction Warning and Confirmation
+# ----------------------------------------------------------------------------
+# Provide detailed warnings and obtain explicit user confirmation
+
+- name: Warn about destruction
+  ansible.builtin.pause:
+    prompt: |
+
+      ⚠️  WARNING: You are about to DESTROY the OpenShift cluster!
+
+      This action will:
+      - Terminate all cluster nodes and infrastructure
+      - Delete all persistent volumes and data
+      - Remove all cluster resources from OpenStack
+      - Remove local installation files
+
+      {% if cluster_fqdn is defined and cluster_fqdn != "unknown" %}
+      Target cluster: {{ cluster_fqdn }}
+      INFRA_ID: {{ infra_id }}
+      {% endif %}
+
+      This action CANNOT be undone!
+
+      Type 'yes' to proceed with destruction or 'no' to cancel
+  register: destruction_confirmation
+  # Provides comprehensive warning about destruction consequences
+  # Requires explicit user confirmation with detailed information
+  # Displays cluster identification to prevent accidental destruction
+
+- name: Cancel destruction if not confirmed
+  ansible.builtin.fail:
+    msg: "Cluster destruction cancelled by user"
+  when: destruction_confirmation.user_input | lower != 'yes'
+  # Cancels destruction if user doesn't explicitly confirm
+  # Provides clear cancellation message
+
+- name: Confirm destruction proceeding
+  ansible.builtin.debug:
+    msg: "✅ Destruction confirmed. Proceeding with cluster removal..."
+  # Confirms that destruction will proceed
+  # Provides positive feedback after successful confirmation
+
+# ============================================================================
+# Pre-destruction Status Check Complete
+# ============================================================================
+# The pre-destruction status check and safety confirmation process is complete.
+# The following validations have been performed:
+#
+# File System Validation:
+# - Installation directory existence verified
+# - Kubeconfig file presence checked
+# - Cluster metadata availability confirmed
+#
+# Cluster Information Extracted:
+# - Cluster FQDN (fully qualified domain name)
+# - Infrastructure ID for OpenStack resource tracking
+# - Cluster accessibility status
+#
+# Cluster Status Assessment:
+# - API endpoint connectivity tested
+# - Node status information gathered (if accessible)
+# - Comprehensive status display provided
+#
+# Safety Confirmation:
+# - Detailed warnings about destruction consequences
+# - Clear information about data loss and irreversibility
+# - Explicit user confirmation required
+# - Graceful cancellation option provided
+#
+# The destruction process can now proceed with confidence that:
+# - The user is fully informed about the consequences
+# - The cluster has been properly identified
+# - Appropriate safety measures have been taken
+# - The user has explicitly confirmed the destruction intent
+# ============================================================================

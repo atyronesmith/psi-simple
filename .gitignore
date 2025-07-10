@@ -1,0 +1,62 @@
+# OpenShift installation artifacts
+openshift-install/
+bin/
+*.tar.gz
+*.log
+
+# Ansible artifacts
+.ansible/
+*.retry
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Secret files - DO NOT COMMIT (but keep directory)
+secrets/pull-secret.json
+secrets/ssh_key.pub
+secrets/ssh_key
+secrets/*.json
+secrets/*.pub
+secrets/*.pem
+secrets/*.key
+
+# Legacy secret file locations (if accidentally placed in root)
+pull-secret.json
+ssh_key*

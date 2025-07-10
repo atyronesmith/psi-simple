@@ -1,50 +1,240 @@
 ---
-# OpenShift Installation Configuration
-openshift_version: "4.18"
-openshift_pull_secret_path: "{{ playbook_dir }}/pull-secret.json"
+# ============================================================================
+# OpenShift Compact Cluster Configuration
+# ============================================================================
+# This file contains all the configuration variables for deploying a compact
+# OpenShift cluster on Red Hat OpenStack Platform (RHOSP).
+#
+# A compact cluster consists of:
+# - 3 control plane nodes (masters)
+# - 0 worker nodes (compute)
+# - Control plane nodes are NOT schedulable for regular workloads
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# OpenShift Version and Binary Configuration
+# ----------------------------------------------------------------------------
+# OpenShift version to install - use "stable-X.Y" for latest stable release
+# or specific version like "4.18.1" for exact version
+openshift_version: "stable-4.18"
+
+# Path to OpenShift pull secret file (required for installation)
+# Download from: https://cloud.redhat.com/openshift/install/pull-secret
+# This file should be stored in secrets/ directory and not committed to git
+openshift_pull_secret_path: "{{ playbook_dir }}/secrets/pull-secret.json"
+
+# Installation workspace directories (auto-created during deployment)
 openshift_installer_path: "{{ playbook_dir }}/openshift-install"
 openshift_client_path: "{{ playbook_dir }}/oc"
 
-# Cluster configuration
-openshift_cluster_name: "{{ openshift_cluster_name | default('openshift-cluster') }}"
-openshift_base_domain: "{{ openshift_base_domain | default('example.com') }}"
-openshift_cluster_network_cidr: "{{ openshift_cluster_network_cidr | default('10.128.0.0/14') }}"
-openshift_service_network_cidr: "{{ openshift_service_network_cidr | default('172.30.0.0/16') }}"
-openshift_host_network_cidr: "{{ openshift_host_network_cidr | default('10.0.0.0/16') }}"
+# ----------------------------------------------------------------------------
+# Cluster Identity Configuration
+# ----------------------------------------------------------------------------
+# Cluster name - used for OpenStack resource naming and DNS
+# Should be DNS-compatible (lowercase, no spaces, hyphens allowed)
+openshift_cluster_name: "openshift-cluster"
 
-# Compact cluster settings
-openshift_compute_replicas: "{{ openshift_compute_replicas | default(0) }}"
+# Base domain for cluster DNS - all cluster endpoints will be under this domain
+# Examples: api.openshift-cluster.example.com, *.apps.openshift-cluster.example.com
+openshift_base_domain: "example.com"
+
+# ----------------------------------------------------------------------------
+# OpenShift Network Configuration
+# ----------------------------------------------------------------------------
+# IMPORTANT: These network CIDRs are automatically validated for conflicts
+# with existing OpenStack subnets. If overlaps are detected, the machine
+# network CIDR will be automatically adjusted to avoid conflicts.
+
+# Cluster network CIDR - used for pod-to-pod communication
+# Default: 10.128.0.0/14 (allows ~262,000 pods across the cluster)
+openshift_cluster_network_cidr: "10.128.0.0/14"
+
+# Service network CIDR - used for Kubernetes services
+# Default: 172.30.0.0/16 (allows ~65,000 services)
+# This should not overlap with cluster network or machine network
+openshift_service_network_cidr: "172.30.0.0/16"
+
+# Machine network CIDR - used for node-to-node communication
+# Default: 172.16.0.0/16 - will be auto-resolved if conflicts detected
+# This network must be routable from your OpenStack environment
+# Alternative CIDRs tested: 192.168.0.0/16, 10.1.0.0/16, etc.
+openshift_host_network_cidr: "172.16.0.0/16"
+
+# ----------------------------------------------------------------------------
+# Compact Cluster Architecture Settings
+# ----------------------------------------------------------------------------
+# Number of worker/compute nodes (set to 0 for compact cluster)
+# In a compact cluster, control plane nodes handle both control and compute workloads
+openshift_compute_replicas: 0
+
+# Number of control plane nodes (must be 3 for production clusters)
+# These nodes run the Kubernetes control plane components
 openshift_control_plane_replicas: 3
 
-# Platform configuration (bare metal, vsphere, aws, etc.)
-openshift_platform: baremetal
+# ----------------------------------------------------------------------------
+# OpenShift Platform Configuration
+# ----------------------------------------------------------------------------
+# Target platform for installation - currently supports OpenStack
+# Other platforms: aws, azure, gcp, vsphere, bare-metal
+openshift_platform: openstack
 
-# Bare metal specific settings
+# ----------------------------------------------------------------------------
+# Legacy/Alternative Platform Settings
+# ----------------------------------------------------------------------------
+# These settings are for alternative platforms and are not used in OpenStack deployment
+# They are kept for compatibility with multi-platform configurations
+
+# Bare metal specific settings (not used in OpenStack deployment)
 openshift_baremetal_provisioning_network: "192.168.1.0/24"
 openshift_baremetal_provisioning_interface: "eth1"
 openshift_baremetal_external_interface: "eth0"
 
-# DNS configuration
+# ----------------------------------------------------------------------------
+# DNS Configuration
+# ----------------------------------------------------------------------------
+# DNS servers used by cluster nodes for name resolution
+# These should be reliable, accessible DNS servers
 openshift_dns_servers:
-  - "8.8.8.8"
-  - "8.8.4.4"
+  - "8.8.8.8"    # Google DNS primary
+  - "8.8.4.4"    # Google DNS secondary
 
-# NTP servers
+# ----------------------------------------------------------------------------
+# Time Synchronization Configuration
+# ----------------------------------------------------------------------------
+# NTP servers for time synchronization across cluster nodes
+# Critical for certificate validation and distributed system operations
 openshift_ntp_servers:
-  - "pool.ntp.org"
+  - "pool.ntp.org"  # Global NTP pool
 
-# SSH key for cluster access
-openshift_ssh_key_path: "{{ playbook_dir }}/ssh_key"
+# ----------------------------------------------------------------------------
+# Authentication and Access Configuration
+# ----------------------------------------------------------------------------
+# SSH public key for cluster access and debugging
+# This key will be installed on all cluster nodes for emergency access
+# Generate with: ssh-keygen -t rsa -b 4096 -C "openshift-cluster-key"
+openshift_ssh_key_path: "{{ playbook_dir }}/secrets/ssh_key.pub"
 
-# Registry configuration
+# ----------------------------------------------------------------------------
+# Container Registry Configuration
+# ----------------------------------------------------------------------------
+# Registry mirrors for container image pulls (optional)
+# Can be used to specify local registry mirrors for better performance
 openshift_registry_mirrors: []
+
+# Additional trust bundle for custom CAs (optional)
+# Used when connecting to registries with custom certificates
 openshift_additional_trust_bundle: ""
 
-# Proxy configuration (if needed)
+# ----------------------------------------------------------------------------
+# Proxy Configuration (Optional)
+# ----------------------------------------------------------------------------
+# HTTP proxy settings for cluster nodes (leave empty if no proxy)
+# Required in environments where internet access is through proxy
 openshift_http_proxy: ""
 openshift_https_proxy: ""
+
+# No-proxy configuration - domains that should bypass proxy
+# Always include cluster domain and common local addresses
 openshift_no_proxy: "localhost,127.0.0.1,{{ openshift_cluster_name }}.{{ openshift_base_domain }}"
 
-# Machine config pool settings
-openshift_machine_config_pool_worker: false  # Disable worker MCP for compact cluster
+# ----------------------------------------------------------------------------
+# Machine Configuration Pool Settings
+# ----------------------------------------------------------------------------
+# Disable worker machine config pool for compact cluster
+# In compact clusters, only master nodes exist and handle all workloads
+openshift_machine_config_pool_worker: false
 
+# ============================================================================
+# OpenStack Platform Configuration
+# ============================================================================
+# Configuration specific to Red Hat OpenStack Platform (RHOSP) deployment
+# These settings control how OpenShift integrates with OpenStack infrastructure
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# OpenStack Cloud Configuration
+# ----------------------------------------------------------------------------
+# OpenStack cloud name from ~/.config/openstack/cloud.yaml
+# This should match the cloud definition in your OpenStack configuration
+# Can be overridden by OS_CLOUD environment variable
+os_cloud: "{{ lookup('env', 'OS_CLOUD') | default('psi') }}"
+
+# ----------------------------------------------------------------------------
+# OpenStack Network Configuration
+# ----------------------------------------------------------------------------
+# External network name for floating IP allocation
+# This network must exist in OpenStack and provide external connectivity
+# Use 'openstack network list --external' to find available external networks
+openshift_external_network: "{{ lookup('env', 'OS_EXTERNAL_NETWORK') | default('provider_net_shared_3', true) }}"
+
+# ----------------------------------------------------------------------------
+# OpenStack Compute Configuration
+# ----------------------------------------------------------------------------
+# Base image for cluster nodes
+# Should be a supported OpenShift image (typically RHCOS or Ubuntu)
+# Use 'openstack image list' to find available images
+openshift_image: "{{ lookup('env', 'OS_IMAGE') | default('Ubuntu-22.04') }}"
+
+# Instance flavor for control plane nodes
+# Should have sufficient resources for OpenShift control plane:
+# - Minimum: 4 vCPUs, 16GB RAM, 100GB disk
+# - Recommended: 8 vCPUs, 32GB RAM, 200GB disk
+# Use 'openstack flavor list' to find available flavors
+openshift_master_flavor: "{{ lookup('env', 'OS_MASTER_FLAVOR') | default('m1.xlarge') }}"
+
+# ============================================================================
+# Environment Variable Override Support
+# ============================================================================
+# Many OpenStack settings can be overridden by environment variables:
+#
+# export OS_CLOUD=your-cloud-name
+# export OS_EXTERNAL_NETWORK=your-external-network
+# export OS_IMAGE=your-image-name
+# export OS_MASTER_FLAVOR=your-flavor-name
+#
+# This allows for flexible configuration without modifying this file
+# ============================================================================
+
+# ============================================================================
+# Network Architecture Overview
+# ============================================================================
+# The deployed cluster will have the following network architecture:
+#
+# External Network (OpenStack)
+#     ↓
+# Floating IPs (2x)
+#     ├── API Floating IP → Load Balancer → Control Plane Nodes
+#     └── Ingress Floating IP → Load Balancer → Application Routes
+#     ↓
+# Machine Network (openshift_host_network_cidr)
+#     ├── Control Plane Node 1 (Master)
+#     ├── Control Plane Node 2 (Master)
+#     └── Control Plane Node 3 (Master)
+#     ↓
+# Cluster Network (openshift_cluster_network_cidr)
+#     └── Pod-to-Pod Communication
+#     ↓
+# Service Network (openshift_service_network_cidr)
+#     └── Kubernetes Services
+# ============================================================================
+
+# ============================================================================
+# Security Notes
+# ============================================================================
+# - Never commit secrets/pull-secret.json or secrets/ssh_key.pub to git
+# - Rotate SSH keys and pull secrets regularly
+# - Use dedicated service accounts for OpenStack access
+# - Review and customize security groups post-installation
+# - Change default kubeadmin password after installation
+# ============================================================================
+
+# ============================================================================
+# Troubleshooting Variables
+# ============================================================================
+# If you encounter issues, you can enable additional debugging by setting:
+#
+# ansible_verbosity: 2                    # Increase Ansible verbosity
+# openshift_install_log_level: debug      # Enable debug logging
+#
+# These are not set by default to avoid excessive output
+# ============================================================================

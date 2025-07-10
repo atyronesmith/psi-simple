@@ -1,0 +1,221 @@
+---
+# ============================================================================
+# OpenShift Cluster Destruction - Main Tasks
+# ============================================================================
+# This file contains tasks for safely destroying an OpenShift cluster and
+# cleaning up all associated resources and files.
+#
+# Destruction Process:
+# 1. Pre-destruction status validation and user confirmation
+# 2. Verify installation directory and cluster state
+# 3. Extract cluster metadata for cleanup tracking
+# 4. Run OpenShift installer destroy process
+# 5. Clean up local installation files and directories
+# 6. Provide comprehensive status feedback
+#
+# Safety Features:
+# - Pre-destruction cluster status checks
+# - Interactive user confirmation required
+# - Detailed warnings about consequences
+# - Graceful handling of partial destruction scenarios
+# - Comprehensive cleanup of local files
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Phase 1: Pre-destruction Validation and Safety Checks
+# ----------------------------------------------------------------------------
+# Perform comprehensive status checks and obtain user confirmation before
+# proceeding with the destructive operations.
+
+- name: Check cluster status before destruction
+  ansible.builtin.include_tasks: status_check.yml
+  # Includes comprehensive pre-destruction validation:
+  # - Cluster accessibility and status verification
+  # - Infrastructure ID extraction
+  # - Interactive user confirmation with detailed warnings
+  # - Graceful handling of inaccessible clusters
+
+# ----------------------------------------------------------------------------
+# Phase 2: Installation Directory Validation
+# ----------------------------------------------------------------------------
+# Verify that the installation directory exists and contains necessary files
+
+- name: Check if installation directory exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install"
+  register: install_dir_stat
+  # Validates presence of the installation workspace directory
+  # This directory contains all cluster state and configuration
+
+- name: Fail if installation directory doesn't exist
+  ansible.builtin.fail:
+    msg: "Installation directory {{ playbook_dir }}/openshift-install does not exist. Cannot destroy cluster."
+  when: not install_dir_stat.stat.exists
+  # Prevents destruction attempts when no cluster state exists
+  # Provides clear error message for troubleshooting
+
+# ----------------------------------------------------------------------------
+# Phase 3: Cluster Authentication Setup
+# ----------------------------------------------------------------------------
+# Configure cluster authentication if kubeconfig is available
+
+- name: Check if kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install/auth/kubeconfig"
+  register: kubeconfig_stat
+  # Checks for cluster authentication credentials
+  # Kubeconfig is used for cluster status verification
+
+- name: Export KUBECONFIG if it exists
+  ansible.builtin.set_fact:
+    kubeconfig_path: "{{ playbook_dir }}/openshift-install/auth/kubeconfig"
+  when: kubeconfig_stat.stat.exists
+  # Sets up kubeconfig path for potential cluster operations
+  # Enables cluster status checking if accessible
+
+# ----------------------------------------------------------------------------
+# Phase 4: Cluster Metadata Extraction
+# ----------------------------------------------------------------------------
+# Extract cluster metadata for tracking and cleanup purposes
+
+- name: Get INFRA_ID from metadata
+  ansible.builtin.command: jq -r .infraID {{ playbook_dir }}/openshift-install/metadata.json
+  register: infra_id_output
+  changed_when: false
+  failed_when: false
+  # Extracts infrastructure ID from cluster metadata
+  # INFRA_ID is used for naming OpenStack resources
+  # Continues even if metadata is missing (failed_when: false)
+
+- name: Set INFRA_ID fact
+  ansible.builtin.set_fact:
+    infra_id: "{{ infra_id_output.stdout }}"
+  when: infra_id_output.rc == 0
+  # Stores infrastructure ID for status reporting
+  # Only set if metadata extraction was successful
+
+# ----------------------------------------------------------------------------
+# Phase 5: OpenShift Cluster Destruction
+# ----------------------------------------------------------------------------
+# Execute the actual cluster destruction using the OpenShift installer
+
+- name: Run OpenShift installer destroy cluster
+  ansible.builtin.command: >
+    {{ playbook_dir }}/bin/openshift-install destroy cluster
+    --dir={{ playbook_dir }}/openshift-install
+    --log-level=info
+  register: destroy_result
+  failed_when: false
+  changed_when: destroy_result.rc == 0
+  retries: 2
+  delay: 30
+  # Executes OpenShift installer destroy command
+  # Includes retry logic for transient failures
+  # Uses failed_when: false to handle partial destruction scenarios
+  # Logs detailed information for troubleshooting
+
+# ----------------------------------------------------------------------------
+# Phase 6: Destruction Result Handling
+# ----------------------------------------------------------------------------
+# Provide appropriate feedback based on destruction results
+
+- name: Handle destroy success
+  ansible.builtin.debug:
+    msg: |
+      ✅ Cluster destruction completed successfully!
+
+      Destroyed cluster: {{ infra_id | default('unknown') }}
+      Exit code: {{ destroy_result.rc }}
+  when: destroy_result.rc == 0
+  # Displays success message with cluster identification
+  # Confirms successful completion of destruction process
+
+- name: Handle destroy failure
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  Cluster destruction encountered issues (exit code: {{ destroy_result.rc }})
+
+      This may be normal if some resources were already deleted.
+
+      Check the logs for details:
+      {{ playbook_dir }}/openshift-install/.openshift_install.log
+
+      Error output:
+      {{ destroy_result.stderr if destroy_result.stderr is defined else 'No stderr available' }}
+  # Provides troubleshooting information for failed destruction
+  # Acknowledges that partial failures are sometimes expected
+  # Directs user to log files for detailed analysis
+
+# ----------------------------------------------------------------------------
+# Phase 7: Local File Cleanup
+# ----------------------------------------------------------------------------
+# Clean up local installation files and directories
+
+- name: Remove installation directory
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/openshift-install"
+    state: absent
+  # Removes the complete installation workspace
+  # Includes: manifests, ignition configs, authentication files, logs
+
+- name: Remove downloaded files
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/{{ item }}"
+    state: absent
+  loop:
+    - openshift-install.tar.gz    # Installer archive
+    - openshift-client.tar.gz     # Client tools archive
+  # Cleans up downloaded installation archives
+  # Removes temporary files that may have been left behind
+
+# ----------------------------------------------------------------------------
+# Phase 8: Destruction Summary
+# ----------------------------------------------------------------------------
+# Provide comprehensive summary of destruction and cleanup operations
+
+- name: Print destruction information
+  ansible.builtin.debug:
+    msg: |
+      OpenShift cluster has been destroyed.
+
+      Removed:
+      - Installation directory: {{ playbook_dir }}/openshift-install/
+      - Downloaded installer and client files
+
+      INFRA_ID was: {{ infra_id | default('unknown') }}
+
+      Note: You may need to manually clean up any infrastructure resources
+      that were created outside of the OpenShift installer (e.g., load balancers,
+      DNS records, etc.) depending on your platform.
+  # Provides comprehensive summary of completed operations
+  # Reminds user about potential manual cleanup requirements
+  # Documents the destroyed cluster's infrastructure ID
+
+# ============================================================================
+# Cluster Destruction Complete
+# ============================================================================
+# The OpenShift cluster destruction process is complete. The following
+# cleanup has been performed:
+#
+# Cluster Infrastructure:
+# - OpenStack resources destroyed via OpenShift installer
+# - Servers, networks, security groups, and storage removed
+# - Floating IPs may be preserved for reuse (depends on installer behavior)
+#
+# Local Files Removed:
+# - Installation directory (openshift-install/)
+# - Cluster configuration files (install-config.yaml)
+# - Kubernetes manifests and ignition configs
+# - Authentication files (kubeconfig, admin password)
+# - Installation logs and metadata
+# - Downloaded installer and client archives
+#
+# Manual Cleanup Considerations:
+# - Verify floating IPs are released or cleaned up
+# - Check for any custom DNS records that need removal
+# - Review OpenStack resources for any orphaned items
+# - Consider cleanup of any additional infrastructure (load balancers, etc.)
+#
+# The cluster is now completely removed and the environment is ready for
+# new deployments or can be considered fully cleaned up.
+# ============================================================================

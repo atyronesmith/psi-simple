@@ -1,0 +1,16 @@
+---
+# Ansible Lint Configuration
+# https://ansible-lint.readthedocs.io/en/latest/configuring.html
+
+# Exclude specific files or directories
+exclude_paths:
+  - "*.retry"
+  - ".git"
+  - ".vscode"
+  - "openshift-install/"
+
+# Set the profile
+profile: production
+
+# Set the verbosity level
+verbosity: 1

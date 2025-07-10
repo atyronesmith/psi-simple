@@ -5,13 +5,21 @@ metadata:
 compute:
 - name: worker
   replicas: {{ openshift_compute_replicas }}
+  platform:
+    {{ openshift_platform }}:
+      type: "m1.xlarge"
 controlPlane:
   name: master
   replicas: {{ openshift_control_plane_replicas }}
+  platform:
+    {{ openshift_platform }}:
+      type: "m1.xlarge"
 platform:
   {{ openshift_platform }}:
-    # Platform-specific configuration goes here
-    # For baremetal, add hosts, interfaces, etc.
+    cloud: "{{ os_cloud | default('psi') }}"
+    externalNetwork: "{{ openshift_external_network | default('provider_net_shared_3') }}"
+    apiFloatingIP: "{{ api_floating_ip | default('') }}"
+    ingressFloatingIP: "{{ ingress_floating_ip | default('') }}"
 pullSecret: '{{ lookup('file', openshift_pull_secret_path) }}'
 sshKey: '{{ lookup('file', openshift_ssh_key_path) }}'
 networking:

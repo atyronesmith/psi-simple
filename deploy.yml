@@ -1,8 +1,140 @@
 ---
+# ============================================================================
+# OpenShift Compact Cluster Deployment Playbook
+# ============================================================================
+# This playbook orchestrates the complete deployment of a compact OpenShift
+# cluster on Red Hat OpenStack Platform (RHOSP) using the official OpenShift
+# installer and Installer-Provisioned Infrastructure (IPI) method.
+#
+# Deployment Features:
+# - Automatic prerequisites validation
+# - Network CIDR conflict detection and resolution
+# - Intelligent floating IP management
+# - DNS setup automation for macOS
+# - Comprehensive error handling and cleanup
+# - Detailed progress reporting and troubleshooting guidance
+#
+# Cluster Architecture:
+# - 3 control plane nodes (masters)
+# - 0 worker nodes (compact cluster)
+# - Control plane nodes are not schedulable for regular workloads
+# - Uses OpenStack for infrastructure provisioning
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts deploy.yml
+#   or
+#   make deploy
+#
+# Prerequisites:
+# - Virtual environment activated: source ~/dev/venv/oc/bin/activate
+# - OpenStack cloud configured: export OS_CLOUD=psi
+# - Required files present: secrets/pull-secret.json, secrets/ssh_key.pub
+# - OpenStack quotas sufficient for 3 control plane nodes and 2 floating IPs
+# ============================================================================
+
 - name: Deploy OpenShift Compact Cluster
-  hosts: localhost
-  connection: local
+  hosts: localhost                    # Runs on local machine (no remote hosts)
+  connection: local                   # Uses local connection for all tasks
   vars_files:
-    - group_vars/all.yml
+    - group_vars/all.yml             # Loads cluster configuration variables
   roles:
-    - openshift-install
+    - openshift-install              # Executes complete installation process
+
+# ============================================================================
+# Deployment Process Overview
+# ============================================================================
+# This playbook executes the following installation phases:
+#
+# 1. Prerequisites Validation:
+#    - Virtual environment and OpenStack configuration
+#    - Required tools (jq, openstack, python3)
+#    - Authentication files (pull secret, SSH key)
+#    - OpenStack connectivity and resource availability
+#
+# 2. Network Configuration:
+#    - CIDR overlap detection with existing OpenStack subnets
+#    - Automatic resolution of network conflicts
+#    - Validation of all OpenShift network configurations
+#
+# 3. Binary Management:
+#    - Download and setup of OpenShift installer and client
+#    - Intelligent caching to avoid re-downloading
+#    - Proper permission configuration for executables
+#
+# 4. Infrastructure Preparation:
+#    - Floating IP management (creation/reuse)
+#    - OpenStack resource validation
+#    - DNS configuration for cluster access
+#
+# 5. OpenShift Configuration:
+#    - Install configuration generation
+#    - Manifest creation and compact cluster modifications
+#    - Ignition configuration generation
+#
+# 6. Cluster Deployment:
+#    - OpenStack infrastructure provisioning
+#    - Bootstrap node deployment
+#    - Control plane node deployment
+#    - Cluster completion and validation
+#
+# 7. Post-Installation:
+#    - Access information display
+#    - Troubleshooting guidance
+#    - Next steps recommendations
+#
+# Expected Duration: 30-45 minutes for complete deployment
+# ============================================================================
+
+# ============================================================================
+# Error Handling and Recovery
+# ============================================================================
+# The deployment includes comprehensive error handling:
+#
+# Automatic Cleanup:
+# - Newly created floating IPs are removed on failure
+# - Installation directory can be optionally cleaned up
+# - Detailed cleanup status reporting
+#
+# Troubleshooting Support:
+# - Comprehensive error messages with specific guidance
+# - Log file locations and analysis instructions
+# - Common issue identification and resolution steps
+# - OpenStack resource verification commands
+#
+# Recovery Procedures:
+# - Safe retry after partial failures
+# - Manual cleanup instructions for complex scenarios
+# - Resource preservation to minimize waste
+# - Clear recovery path documentation
+# ============================================================================
+
+# ============================================================================
+# Success Indicators
+# ============================================================================
+# Successful deployment is indicated by:
+#
+# File System:
+# - openshift-install/auth/kubeconfig created
+# - openshift-install/auth/kubeadmin-password created
+# - openshift-install/metadata.json populated
+# - openshift-install/.openshift_install.log shows success
+#
+# Cluster Access:
+# - API endpoint accessible via floating IP
+# - Console URL accessible via ingress floating IP
+# - DNS resolution configured (macOS)
+# - Authentication working with provided credentials
+#
+# Infrastructure:
+# - 3 control plane nodes running in OpenStack
+# - Floating IPs properly allocated and configured
+# - OpenStack resources properly tagged and organized
+# - Network connectivity between all components
+#
+# Next Steps After Success:
+# 1. Export KUBECONFIG environment variable
+# 2. Use 'oc' command to interact with cluster
+# 3. Access web console for management
+# 4. Configure additional cluster settings as needed
+# 5. Deploy applications and workloads
+# ============================================================================

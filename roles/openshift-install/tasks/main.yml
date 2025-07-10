@@ -1,66 +1,319 @@
 ---
+# ============================================================================
+# OpenShift Compact Cluster Installation - Main Tasks
+# ============================================================================
+# This file contains the main installation tasks for deploying a compact
+# OpenShift cluster on Red Hat OpenStack Platform (RHOSP).
+#
+# Installation Process Flow:
+# 1. Prerequisites validation (environment, tools, files, connectivity)
+# 2. CIDR validation and conflict resolution
+# 3. Binary download and setup (openshift-install, oc)
+# 4. Floating IP management (API and Ingress)
+# 5. Install configuration generation
+# 6. Manifest creation and compact cluster modifications
+# 7. Ignition config generation
+# 8. DNS setup automation (macOS)
+# 9. OpenShift cluster deployment
+# 10. Post-installation status and access information
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Phase 1: Environment and Network Validation
+# ----------------------------------------------------------------------------
+# Validate that the environment is properly configured and all prerequisites
+# are met before beginning the installation process.
+
+- name: Validate prerequisites
+  ansible.builtin.include_tasks: prerequisites.yml
+  # Validates:
+  # - Virtual environment activation
+  # - OS_CLOUD environment variable
+  # - Required tools (jq, openstack, python3)
+  # - Pull secret and SSH key files
+  # - OpenStack connectivity and quotas
+
+- name: Validate CIDR configuration
+  ansible.builtin.include_tasks: cidr_validation.yml
+  # Validates:
+  # - Network CIDR overlap detection with existing OpenStack subnets
+  # - Automatic resolution of conflicts using candidate CIDRs
+  # - Updates openshift_host_network_cidr if conflicts are found
+
+# ----------------------------------------------------------------------------
+# Phase 2: Directory Structure and Binary Management
+# ----------------------------------------------------------------------------
+# Create necessary directories and manage OpenShift binaries
+
+- name: Detect operating system
+  ansible.builtin.set_fact:
+    os_type: "{{ 'darwin' if ansible_system == 'Darwin' else 'linux' }}"
+    os_arch: "{{ ansible_machine }}"
+  # Detects operating system type and architecture for binary downloads
+
+- name: Set OpenShift binary URLs based on OS
+  ansible.builtin.set_fact:
+    installer_url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ openshift_version }}/openshift-install-{{ 'mac' if os_type == 'darwin' else 'linux' }}.tar.gz"
+    client_url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ openshift_version }}/openshift-client-{{ 'mac' if os_type == 'darwin' else 'linux' }}.tar.gz"
+  # Sets appropriate download URLs based on detected OS
+
+- name: Create bin directory
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/bin"
+    state: directory
+    mode: '0755'
+  # Creates directory for OpenShift installer and client binaries
+
 - name: Create installation directory
   ansible.builtin.file:
     path: "{{ playbook_dir }}/openshift-install"
     state: directory
     mode: '0755'
+  # Creates workspace directory for installation files, manifests, and configs
+
+# ----------------------------------------------------------------------------
+# OpenShift Installer Binary Management
+# ----------------------------------------------------------------------------
+# Download and set up the OpenShift installer only if not already present
+
+- name: Check if OpenShift installer already exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/bin/openshift-install"
+  register: installer_exists
+  # Avoids re-downloading if binary already exists
 
 - name: Download OpenShift installer
   ansible.builtin.get_url:
-    url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ openshift_version }}/openshift-install-linux-{{ openshift_version }}.tar.gz"
+    url: "{{ installer_url }}"
     dest: "{{ playbook_dir }}/openshift-install.tar.gz"
     mode: '0644'
-  register: installer_download
+  when: not installer_exists.stat.exists
+  # Downloads official OpenShift installer for detected OS
 
 - name: Extract OpenShift installer
   ansible.builtin.unarchive:
     src: "{{ playbook_dir }}/openshift-install.tar.gz"
-    dest: "{{ playbook_dir }}/openshift-install/"
+    dest: "{{ playbook_dir }}/bin/"
     remote_src: false
-    creates: "{{ playbook_dir }}/openshift-install/openshift-install"
-  when: installer_download.changed
+    creates: "{{ playbook_dir }}/bin/openshift-install"
+  when: not installer_exists.stat.exists
+  # Extracts installer binary to bin/ directory
+
+- name: Remove installer archive after extraction
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/openshift-install.tar.gz"
+    state: absent
+  when: not installer_exists.stat.exists
+  # Cleanup: removes archive to save disk space
+
+# ----------------------------------------------------------------------------
+# OpenShift Client (oc) Binary Management
+# ----------------------------------------------------------------------------
+# Download and set up the OpenShift client only if not already present
+
+- name: Check if OpenShift client already exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/bin/oc"
+  register: client_exists
+  # Avoids re-downloading if binary already exists
 
 - name: Download OpenShift client (oc)
   ansible.builtin.get_url:
-    url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ openshift_version }}/openshift-client-linux-{{ openshift_version }}.tar.gz"
+    url: "{{ client_url }}"
     dest: "{{ playbook_dir }}/openshift-client.tar.gz"
     mode: '0644'
-  register: client_download
+  when: not client_exists.stat.exists
+  # Downloads official OpenShift client for detected OS
 
 - name: Extract OpenShift client
   ansible.builtin.unarchive:
     src: "{{ playbook_dir }}/openshift-client.tar.gz"
-    dest: "{{ playbook_dir }}/openshift-install/"
+    dest: "{{ playbook_dir }}/bin/"
     remote_src: false
-    creates: "{{ playbook_dir }}/openshift-install/oc"
-  when: client_download.changed
+    creates: "{{ playbook_dir }}/bin/oc"
+  when: not client_exists.stat.exists
+  # Extracts client binary (oc and kubectl) to bin/ directory
+
+- name: Remove client archive after extraction
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/openshift-client.tar.gz"
+    state: absent
+  when: not client_exists.stat.exists
+  # Cleanup: removes archive to save disk space
+
+# ----------------------------------------------------------------------------
+# Binary Permission Management
+# ----------------------------------------------------------------------------
+# Ensure binaries are executable
+
+- name: Check if binaries exist before making executable
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/bin/{{ item }}"
+  register: binary_exists
+  with_items:
+    - openshift-install
+    - oc
+  # Validates binary existence before attempting to set permissions
 
 - name: Make installer and client executable
   ansible.builtin.file:
-    path: "{{ playbook_dir }}/openshift-install/{{ item }}"
+    path: "{{ playbook_dir }}/bin/{{ item.item }}"
     mode: '0755'
-  loop:
-    - openshift-install
-    - oc
+  with_items: "{{ binary_exists.results }}"
+  when: item.stat.exists
+  # Sets executable permissions on downloaded binaries
+
+# ----------------------------------------------------------------------------
+# Phase 3: Floating IP Management
+# ----------------------------------------------------------------------------
+# Manage floating IPs for API and Ingress endpoints with intelligent reuse
+
+# API Floating IP Management
+- name: Check for existing API floating IP
+  ansible.builtin.shell: >
+    set -o pipefail &&
+    openstack floating ip list --long --format json |
+    jq '[.[] | select(.Description == "API {{ openshift_cluster_name }}.{{ openshift_base_domain }}")]'
+  environment:
+    OS_CLOUD: "{{ os_cloud }}"
+  register: existing_api_fip
+  changed_when: false
+  failed_when: false
+  # Searches for existing API floating IP by description to enable reuse
+  # Uses jq to filter results for exact description match
+
+- name: Create API floating IP if not exists
+  ansible.builtin.command: >
+    openstack floating ip create
+    --description "API {{ openshift_cluster_name }}.{{ openshift_base_domain }}"
+    --format json
+    "{{ openshift_external_network }}"
+  environment:
+    OS_CLOUD: "{{ os_cloud }}"
+  register: new_api_fip_result
+  changed_when: new_api_fip_result.rc == 0
+  retries: 3
+  delay: 10
+  until: new_api_fip_result.rc == 0
+  failed_when: new_api_fip_result.rc != 0
+  when: (existing_api_fip.stdout | from_json) | length == 0
+  # Creates new API floating IP only if one doesn't exist
+  # Includes retry logic for OpenStack API reliability
+
+- name: Extract API floating IP address from existing FIP
+  ansible.builtin.set_fact:
+    api_floating_ip: "{{ ((existing_api_fip.stdout | from_json) | first)['Floating IP Address'] }}"
+  when: (existing_api_fip.stdout | from_json) | length > 0
+  # Extracts IP address from existing floating IP JSON response
+
+- name: Extract API floating IP address from new FIP
+  ansible.builtin.set_fact:
+    api_floating_ip: "{{ (new_api_fip_result.stdout | from_json).floating_ip_address }}"
+  when: new_api_fip_result is defined and not new_api_fip_result.skipped | default(false) and new_api_fip_result.rc == 0
+  # Extracts IP address from newly created floating IP JSON response
+
+- name: Validate API floating IP was extracted
+  ansible.builtin.fail:
+    msg: "Failed to extract API floating IP address from OpenStack output"
+  when: api_floating_ip is not defined or api_floating_ip == ""
+  # Ensures IP address was successfully extracted before proceeding
+
+# Ingress Floating IP Management
+- name: Check for existing Ingress floating IP
+  ansible.builtin.shell: >
+    set -o pipefail &&
+    openstack floating ip list --long --format json |
+    jq '[.[] | select(.Description == "Ingress {{ openshift_cluster_name }}.{{ openshift_base_domain }}")]'
+  environment:
+    OS_CLOUD: "{{ os_cloud }}"
+  register: existing_ingress_fip
+  changed_when: false
+  failed_when: false
+  # Searches for existing Ingress floating IP by description to enable reuse
+
+- name: Create Ingress floating IP if not exists
+  ansible.builtin.command: >
+    openstack floating ip create
+    --description "Ingress {{ openshift_cluster_name }}.{{ openshift_base_domain }}"
+    --format json
+    "{{ openshift_external_network }}"
+  environment:
+    OS_CLOUD: "{{ os_cloud }}"
+  register: new_ingress_fip_result
+  changed_when: new_ingress_fip_result.rc == 0
+  retries: 3
+  delay: 10
+  until: new_ingress_fip_result.rc == 0
+  failed_when: new_ingress_fip_result.rc != 0
+  when: (existing_ingress_fip.stdout | from_json) | length == 0
+  # Creates new Ingress floating IP only if one doesn't exist
+
+- name: Extract Ingress floating IP address from existing FIP
+  ansible.builtin.set_fact:
+    ingress_floating_ip: "{{ ((existing_ingress_fip.stdout | from_json) | first)['Floating IP Address'] }}"
+  when: (existing_ingress_fip.stdout | from_json) | length > 0
+  # Extracts IP address from existing floating IP JSON response
+
+- name: Extract Ingress floating IP address from new FIP
+  ansible.builtin.set_fact:
+    ingress_floating_ip: "{{ (new_ingress_fip_result.stdout | from_json).floating_ip_address }}"
+  when: new_ingress_fip_result is defined and not new_ingress_fip_result.skipped | default(false) and new_ingress_fip_result.rc == 0
+  # Extracts IP address from newly created floating IP JSON response
+
+- name: Validate Ingress floating IP was extracted
+  ansible.builtin.fail:
+    msg: "Failed to extract Ingress floating IP address from OpenStack output"
+  when: ingress_floating_ip is not defined or ingress_floating_ip == ""
+  # Ensures IP address was successfully extracted before proceeding
+
+- name: Display floating IP information
+  ansible.builtin.debug:
+    msg: |
+      ✅ Floating IPs configured successfully:
+      - API: {{ api_floating_ip }} {% if (existing_api_fip.stdout | from_json) | length > 0 %}(reused existing){% else %}(newly created){% endif %}
+      - Ingress: {{ ingress_floating_ip }} {% if (existing_ingress_fip.stdout | from_json) | length > 0 %}(reused existing){% else %}(newly created){% endif %}
+  # Provides clear feedback on floating IP status (reused vs newly created)
+
+# ----------------------------------------------------------------------------
+# Phase 4: OpenShift Configuration Generation
+# ----------------------------------------------------------------------------
+# Generate install-config.yaml with floating IPs and cluster settings
 
 - name: Create install-config.yaml for compact cluster
   ansible.builtin.template:
     src: install-config.yaml.j2
     dest: "{{ playbook_dir }}/openshift-install/install-config.yaml"
     mode: '0644'
+  # Creates OpenShift installation configuration from template
+  # Includes floating IPs, cluster settings, and platform-specific configuration
+
+# ----------------------------------------------------------------------------
+# Phase 5: Manifest Generation and Compact Cluster Modification
+# ----------------------------------------------------------------------------
+# Generate Kubernetes manifests and modify for compact cluster architecture
 
 - name: Run OpenShift installer to create manifests
   ansible.builtin.command: >
-    {{ playbook_dir }}/openshift-install/openshift-install create manifests
+    {{ playbook_dir }}/bin/openshift-install create manifests
     --dir={{ playbook_dir }}/openshift-install
   args:
     creates: "{{ playbook_dir }}/openshift-install/manifests"
+  # Generates Kubernetes manifests from install-config.yaml
+  # Creates manifests/ directory with all cluster component definitions
 
 - name: Remove worker machine set for compact cluster
   ansible.builtin.file:
     path: "{{ playbook_dir }}/openshift-install/manifests/99_openshift-cluster-api_worker-machineset-*.yaml"
     state: absent
   failed_when: false
+  # Removes worker machine set manifests for compact cluster
+  # In compact clusters, only control plane nodes exist
+
+- name: Check if cluster-scheduler-02-config.yml exists
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/openshift-install/manifests/cluster-scheduler-02-config.yml"
+  register: scheduler_config_file
+  # Checks if scheduler configuration file exists before modification
 
 - name: Check and set mastersSchedulable to false
   ansible.builtin.replace:
@@ -68,22 +321,35 @@
     regexp: 'mastersSchedulable: true'
     replace: 'mastersSchedulable: false'
   register: scheduler_config_change
+  when: scheduler_config_file.stat.exists
+  # Prevents regular workloads from being scheduled on master nodes
+  # This is the recommended configuration for compact clusters
+
+# ----------------------------------------------------------------------------
+# Phase 6: Ignition Configuration Generation
+# ----------------------------------------------------------------------------
+# Generate ignition configs for cluster bootstrap and node provisioning
 
 - name: Run OpenShift installer to create ignition configs
   ansible.builtin.command: >
-    {{ playbook_dir }}/openshift-install/openshift-install create ignition-configs
+    {{ playbook_dir }}/bin/openshift-install create ignition-configs
     --dir={{ playbook_dir }}/openshift-install
   args:
     creates: "{{ playbook_dir }}/openshift-install/bootstrap.ign"
+  # Generates ignition configs for cluster provisioning
+  # Creates: bootstrap.ign, master.ign, worker.ign, metadata.json
 
 - name: Export INFRA_ID from metadata
-  ansible.builtin.shell: jq -r .infraID {{ playbook_dir }}/openshift-install/metadata.json
+  ansible.builtin.command: jq -r .infraID {{ playbook_dir }}/openshift-install/metadata.json
   register: infra_id_output
   changed_when: false
+  # Extracts infrastructure ID from cluster metadata
+  # This ID is used for naming OpenStack resources
 
 - name: Set INFRA_ID fact
   ansible.builtin.set_fact:
     infra_id: "{{ infra_id_output.stdout }}"
+  # Stores infrastructure ID as Ansible fact for later use
 
 - name: Print installation information
   ansible.builtin.debug:
@@ -100,10 +366,287 @@
 
       INFRA_ID: {{ infra_id }}
 
-      Next steps:
-      1. Copy the ignition configs to your infrastructure
-      2. Provision nodes using the ignition configs
-      3. Start the bootstrap process
-      4. Complete the cluster installation
+      Starting cluster deployment...
+  # Provides detailed information about generated files and next steps
 
-      For detailed instructions, see the OpenShift documentation.
+# ----------------------------------------------------------------------------
+# Phase 7: DNS Setup Automation
+# ----------------------------------------------------------------------------
+# Automatically configure DNS resolution for cluster endpoints
+
+- name: Detect OS for DNS setup
+  ansible.builtin.set_fact:
+    is_macos: "{{ ansible_system == 'Darwin' }}"
+    is_linux: "{{ ansible_system == 'Linux' }}"
+  # Detects operating system for DNS configuration approach
+
+- name: Get distribution info for Linux systems
+  ansible.builtin.set_fact:
+    linux_distro: "{{ ansible_distribution | lower }}"
+    linux_version: "{{ ansible_distribution_major_version }}"
+  when: is_linux
+  # Gets Linux distribution details for platform-specific handling
+
+# DNS Setup - First Attempt (without password)
+- name: Setup DNS resolution for cluster - First attempt
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - OpenShift DNS {{ openshift_cluster_name }}.{{ openshift_base_domain }}"
+    block: |
+      {{ api_floating_ip }} api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} console-openshift-console.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} oauth-openshift.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} grafana-openshift-monitoring.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} prometheus-k8s-openshift-monitoring.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} integrated-oauth-server-openshift-authentication.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+    create: true
+    mode: '0644'
+  become: true
+  register: dns_setup_result
+  failed_when: false
+  # Attempts to configure DNS entries in /etc/hosts
+  # Works on all platforms (macOS, Fedora, RHEL)
+
+# Interactive Password Prompting for DNS Setup
+- name: Prompt for sudo password if DNS setup failed
+  ansible.builtin.pause:
+    prompt: |
+
+      ⚠️  DNS setup requires sudo access to modify /etc/hosts.
+      Please enter your sudo password to continue with automatic DNS setup
+      (or press Ctrl+C and then 'A' to abort and continue without DNS setup)
+
+      Sudo password
+    echo: false
+  register: sudo_password_prompt
+  when: dns_setup_result.failed | default(false)
+  # Prompts for sudo password if initial DNS setup failed
+
+# DNS Setup - Second Attempt (with password)
+- name: Setup DNS resolution for cluster - Second attempt with password
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - OpenShift DNS {{ openshift_cluster_name }}.{{ openshift_base_domain }}"
+    block: |
+      {{ api_floating_ip }} api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} console-openshift-console.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} oauth-openshift.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} grafana-openshift-monitoring.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} prometheus-k8s-openshift-monitoring.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} integrated-oauth-server-openshift-authentication.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+    create: true
+    mode: '0644'
+  become: true
+  vars:
+    ansible_become_password: "{{ sudo_password_prompt.user_input }}"
+  when: sudo_password_prompt is defined and sudo_password_prompt.user_input is defined
+  register: dns_setup_result_retry
+  # Retries DNS setup with user-provided sudo password
+
+- name: Set final DNS setup result
+  ansible.builtin.set_fact:
+    dns_setup_final_result: "{{ dns_setup_result_retry if dns_setup_result_retry is defined else dns_setup_result }}"
+  # Determines final DNS setup result for status reporting
+
+# DNS Setup Status Messages
+- name: Display DNS setup information
+  ansible.builtin.debug:
+    msg: |
+      ✅ DNS setup completed for OpenShift cluster:
+      - API endpoint: api.{{ openshift_cluster_name }}.{{ openshift_base_domain }} -> {{ api_floating_ip }}
+      - Console: console-openshift-console.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }} -> {{ ingress_floating_ip }}
+      - OAuth: oauth-openshift.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }} -> {{ ingress_floating_ip }}
+
+      DNS entries added to /etc/hosts for cluster DNS resolution during installation.
+      Platform: {{ ansible_system }} {{ '(' + linux_distro + ' ' + linux_version + ')' if is_linux else '' }}
+  when: dns_setup_final_result.changed | default(false)
+  # Displays success message with configured endpoints
+
+- name: Display DNS setup failure message
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  DNS setup failed - could not modify /etc/hosts
+
+      To enable DNS resolution for OpenShift installation, please run:
+
+      sudo tee -a /etc/hosts <<EOF
+
+      # BEGIN ANSIBLE MANAGED BLOCK - OpenShift DNS {{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ api_floating_ip }} api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} console-openshift-console.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} oauth-openshift.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} grafana-openshift-monitoring.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} prometheus-k8s-openshift-monitoring.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      {{ ingress_floating_ip }} integrated-oauth-server-openshift-authentication.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      # END ANSIBLE MANAGED BLOCK - OpenShift DNS {{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      EOF
+
+      Or alternatively, run: make setup-dns
+
+      Installation will continue without DNS setup.
+  when: dns_setup_final_result.failed | default(false) and not dns_setup_final_result.changed | default(false)
+  # Provides manual DNS setup instructions if automation failed
+
+# DNS Setup Completion
+- name: Display DNS setup completion message
+  ansible.builtin.debug:
+    msg: |
+      ✅ DNS entries have been configured for OpenShift cluster endpoints.
+
+      Note: DNS resolution will be verified after cluster deployment is complete.
+      The API endpoint will not be accessible until the cluster is fully deployed.
+  when: dns_setup_final_result.changed | default(false)
+  # Informs about DNS setup completion and sets expectations
+
+# ----------------------------------------------------------------------------
+# Phase 8: OpenShift Cluster Deployment
+# ----------------------------------------------------------------------------
+# Deploy the actual OpenShift cluster using the installer
+
+- name: Run OpenShift installer to create cluster
+  ansible.builtin.command: >
+    {{ playbook_dir }}/bin/openshift-install create cluster
+    --dir={{ playbook_dir }}/openshift-install
+    --log-level=info
+  register: cluster_creation_result
+  retries: 1
+  delay: 0
+  until: cluster_creation_result.rc == 0
+  changed_when: cluster_creation_result.rc == 0
+  failed_when: cluster_creation_result.rc != 0
+  # Runs the OpenShift installer to create the complete cluster
+  # This process typically takes 30-45 minutes for a compact cluster
+
+# ----------------------------------------------------------------------------
+# Phase 9: Post-Installation Status and Information
+# ----------------------------------------------------------------------------
+# Display cluster information and access details
+
+- name: Display cluster creation result
+  ansible.builtin.debug:
+    msg: |
+      ✅ Cluster creation completed successfully!
+
+      Cluster details:
+      - Name: {{ openshift_cluster_name }}
+      - Base Domain: {{ openshift_base_domain }}
+      - API URL: https://api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}:6443
+      - Console URL: https://console-openshift-console.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      - Kubeconfig: {{ playbook_dir }}/openshift-install/auth/kubeconfig
+      - Kubeadmin password: {{ playbook_dir }}/openshift-install/auth/kubeadmin-password
+  when: cluster_creation_result.rc == 0
+  # Displays success message with all cluster access information
+
+- name: Handle cluster creation failure
+  ansible.builtin.debug:
+    msg: |
+      ❌ Cluster creation failed. Please check the logs for details:
+
+      Log file: {{ playbook_dir }}/openshift-install/.openshift_install.log
+
+      Common issues:
+      - Insufficient OpenStack quotas
+      - Network connectivity issues
+      - DNS resolution problems
+      - Floating IP allocation failures
+
+      To debug:
+      1. Check the installer log: tail -f {{ playbook_dir }}/openshift-install/.openshift_install.log
+      2. Verify OpenStack resources: openstack server list
+      3. Check network connectivity to floating IPs
+
+      Error output:
+      {{ cluster_creation_result.stderr if cluster_creation_result.stderr is defined else 'No stderr available' }}
+  when: cluster_creation_result.rc != 0
+  # Provides detailed debugging information if installation fails
+
+# ----------------------------------------------------------------------------
+# Phase 10: Post-Deployment DNS Validation
+# ----------------------------------------------------------------------------
+# Verify DNS resolution and cluster accessibility after successful deployment
+
+- name: Test DNS resolution after cluster deployment
+  ansible.builtin.command: nslookup api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+  register: post_deployment_dns_test
+  changed_when: false
+  failed_when: false
+  when: is_macos and cluster_creation_result.rc == 0
+  # Tests DNS resolution for API endpoint after successful cluster deployment
+
+- name: Test cluster API accessibility
+  ansible.builtin.uri:
+    url: "https://api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}:6443/healthz"
+    method: GET
+    validate_certs: false
+    timeout: 10
+  register: api_health_check
+  failed_when: false
+  when: is_macos and cluster_creation_result.rc == 0
+  # Tests if the cluster API is accessible and responding
+
+- name: Display DNS validation results
+  ansible.builtin.debug:
+    msg: |
+      🔍 Post-deployment DNS validation results:
+
+      DNS Resolution: {% if post_deployment_dns_test.rc == 0 %}✅ SUCCESS{% else %}❌ FAILED{% endif %}
+      API Accessibility: {% if api_health_check.status == 200 %}✅ SUCCESS{% else %}❌ FAILED (Status: {{ api_health_check.status | default('N/A') }}){% endif %}
+
+      {% if post_deployment_dns_test.rc == 0 and api_health_check.status == 200 %}
+      ✅ DNS is working correctly and cluster is accessible!
+      {% elif post_deployment_dns_test.rc == 0 and api_health_check.status != 200 %}
+      ⚠️  DNS resolution works but cluster API is not yet accessible.
+      This may be normal if the cluster is still initializing.
+      {% elif post_deployment_dns_test.rc != 0 %}
+      ⚠️  DNS resolution failed. You may need to manually configure DNS.
+      Run: make setup-dns
+      {% endif %}
+  when: is_macos and cluster_creation_result.rc == 0 and (post_deployment_dns_test is defined or api_health_check is defined)
+  # Displays comprehensive DNS and API accessibility validation results
+
+- name: Print cluster deployment completion
+  ansible.builtin.debug:
+    msg: |
+      🎉 OpenShift cluster deployment completed successfully!
+
+      Cluster Information:
+      - Name: {{ openshift_cluster_name }}
+      - Domain: {{ openshift_base_domain }}
+      - Infrastructure ID: {{ infra_id }}
+      - Platform: {{ openshift_platform }}
+      - Control Plane Replicas: {{ openshift_control_plane_replicas }}
+      - Compute Replicas: {{ openshift_compute_replicas }}
+
+      Access Information:
+      - Kubeconfig: {{ playbook_dir }}/openshift-install/auth/kubeconfig
+      - Console URL: https://console-openshift-console.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}
+      - API URL: https://api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}:6443
+      - API Floating IP: {{ api_floating_ip }}
+      - Ingress Floating IP: {{ ingress_floating_ip }}
+
+      DNS entries have been configured for local cluster access.
+      You can now access the cluster using the floating IPs.
+
+      Next steps:
+      1. Export KUBECONFIG={{ playbook_dir }}/openshift-install/auth/kubeconfig
+      2. Use 'oc' command to interact with your cluster
+      3. Access the web console at the URL above
+
+# ============================================================================
+# Installation Complete
+# ============================================================================
+# The OpenShift compact cluster installation is now complete. The cluster
+# should be accessible via the floating IPs and configured DNS entries.
+#
+# Files created:
+# - openshift-install/auth/kubeconfig: Cluster access credentials
+# - openshift-install/auth/kubeadmin-password: Admin password
+# - openshift-install/metadata.json: Cluster metadata
+# - openshift-install/.openshift_install.log: Installation log
+#
+# Next steps:
+# 1. Export KUBECONFIG environment variable
+# 2. Use 'oc' command to manage the cluster
+# 3. Access the web console for graphical management
+# 4. Configure additional cluster settings as needed
+# ============================================================================
